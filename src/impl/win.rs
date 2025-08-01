@@ -14,7 +14,7 @@ use windows::Win32::System::Memory::{
 pub type OwnedFileDescriptor = OwnedHandle;
 pub type RawFileDescriptor = RawHandle;
 
-use super::{Access, Snapshot, View, ViewMode};
+use super::{effective_size, Access, Snapshot, View, ViewMode};
 
 impl Snapshot {
     pub(super) fn from_file_impl(file: std::fs::File) -> std::io::Result<Self> {
@@ -25,16 +25,15 @@ impl Snapshot {
         const _: () = assert!(std::mem::size_of::<usize>() == 8);
 
         let size = size.next_multiple_of(page_size::get() as _);
-        let size_high = (size >> 32) as u32;
-        let size_low = (size & 0xFFFFFFFF) as u32;
+        let (size_low, size_high) = split_size(effective_size(size));
 
         let handle = unsafe {
             CreateFileMappingA(
                 HANDLE(file.as_raw_handle()),
                 None,
                 PAGE_EXECUTE_READWRITE,
-                size_high,
-                size_low,
+                size_high as _,
+                size_low as _,
                 PCSTR::null(),
             )
         }?;
@@ -50,16 +49,15 @@ impl Snapshot {
         const _: () = assert!(std::mem::size_of::<usize>() == 8);
 
         let size = size.next_multiple_of(page_size::get() as _);
-        let size_high = (size >> 32) as u32;
-        let size_low = (size & 0xFFFFFFFF) as u32;
+        let (size_low, size_high) = split_size(effective_size(size));
 
         let handle = unsafe {
             CreateFileMappingA(
                 INVALID_HANDLE_VALUE,
                 None,
                 PAGE_EXECUTE_READWRITE,
-                size_high,
-                size_low,
+                size_high as _,
+                size_low as _,
                 PCSTR::null(),
             )
         }?;
@@ -81,12 +79,11 @@ impl<S> View<S> {
         size: usize,
         mode: ViewMode,
     ) -> std::io::Result<Self> {
-        let size = size;
         let placeholder = unsafe {
             VirtualAlloc2(
                 None,
                 None,
-                size,
+                effective_size(size),
                 MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
                 PAGE_NOACCESS.0,
                 None,
@@ -101,9 +98,9 @@ impl<S> View<S> {
                 None,
                 Some(placeholder as *const _),
                 0,
-                size,
+                effective_size(size),
                 MEM_REPLACE_PLACEHOLDER,
-                mode.to_winapi().0,
+                mode.as_winapi().0,
                 None,
             )
         };
@@ -143,9 +140,9 @@ impl<S> View<S> {
                 None,
                 Some(self.ptr as *const _),
                 0,
-                self.size,
+                effective_size(self.size),
                 MEM_REPLACE_PLACEHOLDER,
-                self.mode.to_winapi().0,
+                self.mode.as_winapi().0,
                 None,
             )
         };
@@ -174,7 +171,7 @@ impl<S> View<S> {
             VirtualProtect(
                 self.ptr.add(offset.start) as _,
                 offset.len(),
-                allow.to_winapi(self.mode),
+                allow.as_winapi(self.mode),
                 &mut old as *mut _,
             )
         }?;
@@ -194,7 +191,7 @@ impl<S> Drop for View<S> {
 }
 
 impl Access {
-    fn to_winapi(&self, mode: ViewMode) -> PAGE_PROTECTION_FLAGS {
+    fn as_winapi(&self, mode: ViewMode) -> PAGE_PROTECTION_FLAGS {
         if *self == Access::NONE {
             return PAGE_NOACCESS;
         }
@@ -220,10 +217,16 @@ impl Access {
 }
 
 impl ViewMode {
-    fn to_winapi(&self) -> PAGE_PROTECTION_FLAGS {
+    fn as_winapi(&self) -> PAGE_PROTECTION_FLAGS {
         match self {
             Self::Cow => PAGE_WRITECOPY,
             Self::Mutable => PAGE_READWRITE,
         }
     }
+}
+
+fn split_size(size: usize) -> (u32, u32) {
+    let high = (size >> 32) as u32;
+    let low = (size & 0xFFFFFFFF) as u32;
+    (low, high)
 }

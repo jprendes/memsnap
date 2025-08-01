@@ -10,7 +10,7 @@ use libc::{
 pub type OwnedFileDescriptor = OwnedFd;
 pub type RawFileDescriptor = RawFd;
 
-use super::{Access, Snapshot, View, ViewMode};
+use super::{effective_size, Access, Snapshot, View, ViewMode};
 
 impl Snapshot {
     pub(super) fn from_file_impl(file: std::fs::File) -> std::io::Result<Self> {
@@ -23,7 +23,7 @@ impl Snapshot {
 
     pub(super) fn zeroed_impl(size: usize) -> std::io::Result<Self> {
         let size = size.next_multiple_of(page_size::get());
-        let fd = unsafe { libc::memfd_create(b"hyperlight_snapshot\0".as_ptr() as _, 0) };
+        let fd = unsafe { libc::memfd_create(c"hyperlight_snapshot".as_ptr() as _, 0) };
         if fd < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -49,9 +49,9 @@ impl<S> View<S> {
         let ptr = unsafe {
             libc::mmap(
                 null_mut(),
-                size,
+                effective_size(size),
                 PROT_READ | PROT_WRITE,
-                mode.to_posix() | MAP_NORESERVE,
+                mode.as_posix() | MAP_NORESERVE,
                 fd,
                 0,
             )
@@ -61,7 +61,6 @@ impl<S> View<S> {
         }
 
         let ptr = ptr as *mut u8;
-        let size = size;
 
         Ok(Self {
             fd,
@@ -78,9 +77,9 @@ impl<S> View<S> {
         let new_ptr = unsafe {
             libc::mmap(
                 self.ptr as _,
-                self.size,
+                effective_size(self.size),
                 PROT_READ | PROT_WRITE,
-                self.mode.to_posix() | MAP_NORESERVE | MAP_FIXED,
+                self.mode.as_posix() | MAP_NORESERVE | MAP_FIXED,
                 self.fd,
                 0,
             )
@@ -100,7 +99,7 @@ impl<S> View<S> {
             libc::mprotect(
                 self.ptr.add(offset.start) as _,
                 offset.len(),
-                allow.to_posix(),
+                allow.as_posix(),
             )
         };
         if res < 0 {
@@ -119,7 +118,7 @@ impl<S> Drop for View<S> {
 }
 
 impl Access {
-    fn to_posix(&self) -> libc::c_int {
+    fn as_posix(&self) -> libc::c_int {
         let mut access = 0;
         if *self == Access::NONE {
             access = PROT_NONE;
@@ -139,7 +138,7 @@ impl Access {
 }
 
 impl ViewMode {
-    fn to_posix(&self) -> libc::c_int {
+    fn as_posix(&self) -> libc::c_int {
         match self {
             ViewMode::Cow => MAP_PRIVATE,
             ViewMode::Mutable => MAP_SHARED,

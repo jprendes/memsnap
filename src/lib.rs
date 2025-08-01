@@ -1,4 +1,4 @@
-use std::ops::{Bound, Deref, Index, IndexMut, RangeBounds};
+use std::ops::{Bound, Index, IndexMut, RangeBounds};
 use std::slice::SliceIndex;
 use std::sync::Arc;
 
@@ -240,7 +240,7 @@ impl<S> View<S> {
     }
 }
 
-impl<I: SliceIndex<[u8]>, S: Deref<Target = Snapshot>> Index<I> for View<S> {
+impl<I: SliceIndex<[u8]>, S> Index<I> for View<S> {
     type Output = I::Output;
 
     #[inline]
@@ -249,7 +249,7 @@ impl<I: SliceIndex<[u8]>, S: Deref<Target = Snapshot>> Index<I> for View<S> {
     }
 }
 
-impl<I: SliceIndex<[u8]>, S: Deref<Target = Snapshot>> IndexMut<I> for View<S> {
+impl<I: SliceIndex<[u8]>, S> IndexMut<I> for View<S> {
     #[inline]
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
         IndexMut::index_mut(self.as_mut_slice(), index)
@@ -281,6 +281,10 @@ bitflags! {
 /// This is the granularity at which memory allocation is done on the system.
 pub fn page_size() -> usize {
     page_size::get()
+}
+
+fn effective_size(size: usize) -> usize {
+    size.max(page_size::get())
 }
 
 #[cfg(test)]

@@ -7,6 +7,24 @@ use segv_test::assert_segv;
 use super::{Access, Snapshot};
 
 #[test]
+fn test_empty_snapshot() {
+    // Test that a snapshot created from an empty slice has a length of 0.
+    let snapshot1 = Snapshot::from_slice(&[]).unwrap();
+    let view = snapshot1.view().unwrap();
+    assert_eq!(view.len(), 0);
+}
+
+#[test]
+fn test_empty_file() {
+    // Test that a snapshot created from an empty file has a length of 0.
+    let d = tempfile::tempdir().unwrap();
+    let f = std::fs::File::create_new(d.path().join("tempfile")).unwrap();
+    let snapshot = Snapshot::from_file(f).unwrap();
+    let view = snapshot.view().unwrap();
+    assert_eq!(view.len(), 0);
+}
+
+#[test]
 fn test_zeroed() {
     // Test that MemorySnapshot::zeroed genertes a snapshot full of zeros
     // of at least the requested size (it may be larger due to alignment)
@@ -14,6 +32,7 @@ fn test_zeroed() {
     let view = snapshot.view().unwrap();
     assert!(view.len() >= 1);
     assert!(view.as_slice().iter().all(|&b| b == 0));
+    assert!(view.len() % page_size::get() == 0);
 }
 
 #[test]
@@ -24,6 +43,7 @@ fn test_from_slice() {
     let snapshot = Snapshot::from_slice(b"hello slice").unwrap();
     let view = snapshot.view().unwrap();
     assert_eq!(&view[..11], b"hello slice");
+    assert!(view.len() % page_size::get() == 0);
 }
 
 #[test]
@@ -167,24 +187,4 @@ fn test_protect_write() {
 
     black_box(view[0]);
     view[0] = 1;
-}
-
-#[test]
-fn test_empty_snapshot() {
-    // Test that protecting a view with MemoryAccess::WRITE can successfully
-    // write to that memory
-    let snapshot1 = Snapshot::from_slice(&[]).unwrap();
-    let view = snapshot1.view().unwrap();
-    assert_eq!(view.len(), 0);
-}
-
-#[test]
-fn test_empty_file() {
-    // Test that MemorySnapshot::from_file creates a snapshot initialized to
-    // the contents of the file.
-    let d = tempfile::tempdir().unwrap();
-    let f = std::fs::File::create_new(d.path().join("tempfile")).unwrap();
-    let snapshot = Snapshot::from_file(f).unwrap();
-    let view = snapshot.view().unwrap();
-    assert_eq!(&view[..10], b"hello file");
 }
