@@ -1,8 +1,13 @@
+use std::fs::File;
 use std::ops::Range;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle, RawHandle};
 
 use windows::core::PCSTR;
+use windows::Wdk::Foundation::{NtQueryObject, ObjectBasicInformation};
 use windows::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Storage::FileSystem::{
+    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+};
 use windows::Win32::System::Memory::{
     CreateFileMappingA, MapViewOfFile3, UnmapViewOfFile, UnmapViewOfFileEx, VirtualAlloc2,
     VirtualProtect, MEMORY_MAPPED_VIEW_ADDRESS, MEM_PRESERVE_PLACEHOLDER, MEM_REPLACE_PLACEHOLDER,
@@ -10,6 +15,7 @@ use windows::Win32::System::Memory::{
     PAGE_EXECUTE_WRITECOPY, PAGE_NOACCESS, PAGE_PROTECTION_FLAGS, PAGE_READONLY, PAGE_READWRITE,
     PAGE_WRITECOPY,
 };
+use windows::Win32::System::WindowsProgramming::PUBLIC_OBJECT_BASIC_INFORMATION;
 
 pub type OwnedFileDescriptor = OwnedHandle;
 pub type RawFileDescriptor = RawHandle;
@@ -27,11 +33,13 @@ impl Snapshot {
         let size = size.next_multiple_of(page_size::get() as _);
         let (size_low, size_high) = split_size(effective_size(size));
 
+        let access = get_file_page_access(&file)?;
+
         let handle = unsafe {
             CreateFileMappingA(
                 HANDLE(file.as_raw_handle()),
                 None,
-                PAGE_EXECUTE_READWRITE,
+                access.as_winapi(ViewMode::Mutable),
                 size_high as _,
                 size_low as _,
                 PCSTR::null(),
@@ -229,4 +237,36 @@ fn split_size(size: usize) -> (u32, u32) {
     let high = (size >> 32) as u32;
     let low = (size & 0xFFFFFFFF) as u32;
     (low, high)
+}
+
+pub fn get_file_page_access(file: &File) -> std::io::Result<Access> {
+    let mut obj_info: PUBLIC_OBJECT_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+    let mut return_length: u32 = 0;
+
+    let status = unsafe {
+        NtQueryObject(
+            Some(HANDLE(file.as_raw_handle())),
+            ObjectBasicInformation,
+            Some(&raw mut obj_info as _),
+            std::mem::size_of::<PUBLIC_OBJECT_BASIC_INFORMATION>() as _,
+            Some(&mut return_length),
+        )
+    };
+
+    if status.is_err() {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    let access = obj_info.GrantedAccess;
+    let mut mode = Access::empty();
+    if access & FILE_GENERIC_EXECUTE.0 == FILE_GENERIC_EXECUTE.0 {
+        mode |= Access::EXEC;
+    }
+    if access & FILE_GENERIC_READ.0 == FILE_GENERIC_READ.0 {
+        mode |= Access::READ;
+    }
+    if access & FILE_GENERIC_WRITE.0 == FILE_GENERIC_WRITE.0 {
+        mode |= Access::WRITE;
+    }
+    Ok(mode)
 }
